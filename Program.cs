@@ -6,7 +6,9 @@ using System.Threading;
 using System.Threading.Tasks;
 using Metrics;
 using NEventStore;
+using NEventStore.Persistence.MongoDB;
 using NEventStore.Persistence.Sql.SqlDialects;
+using NEventStore.Serialization;
 using Timer = Metrics.Timer;
 
 namespace NEventStoreMetrics
@@ -42,12 +44,15 @@ namespace NEventStoreMetrics
         private static void ConfigureNES()
         {
             Wireup wireup = Wireup.Init();
-            PersistenceWireup persistenceWireup = ConfigurePersistence(wireup);
+   //         PersistenceWireup persistenceWireup = ConfigureSql(wireup);
+            PersistenceWireup persistenceWireup = ConfigureMongo(wireup);
             counter.Increment(Iterations);
 
             using (
                 var storeEvents =
-                    persistenceWireup.InitializeStorageEngine().UsingBinarySerialization().Build())
+                    persistenceWireup.InitializeStorageEngine()
+                    .UsingBinarySerialization()
+                    .Build())
             {
                 storeEvents.Advanced.Purge();
 
@@ -59,7 +64,7 @@ namespace NEventStoreMetrics
                             var stream = storeEvents.OpenStream("default", x.ToString(), 0, int.MaxValue);
                             stream.Add(new EventMessage()
                             {
-                                Body = new byte[1024]
+                                Body = "abc"
                             });
                             stream.CommitChanges(Guid.NewGuid());
                         }
@@ -72,11 +77,20 @@ namespace NEventStoreMetrics
             }
         }
 
-        private static PersistenceWireup ConfigurePersistence(Wireup wireup)
+        private static PersistenceWireup ConfigureSql(Wireup wireup)
         {
             return wireup
                 .UsingSqlPersistence("SqlServer")
                 .WithDialect(new MsSqlDialect());
+        }
+
+        private static PersistenceWireup ConfigureMongo(Wireup wireup)
+        {
+            return wireup
+                .UsingMongoPersistence("Mongo", new DocumentObjectSerializer(), new MongoPersistenceOptions()
+                {
+                    ServerSideOptimisticLoop = true
+                });
         }
     }
 }
