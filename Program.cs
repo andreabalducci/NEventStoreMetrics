@@ -2,17 +2,23 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using Metrics;
 using NEventStore;
 using NEventStore.Persistence.Sql.SqlDialects;
+using Timer = Metrics.Timer;
 
 namespace NEventStoreMetrics
 {
     class Program
     {
+        private const int Iterations = 100000;
         private static string endpoint = "http://localhost:1234/";
-        private static readonly Counter counter = Metric.Counter("Inserts", Unit.Requests);
+        private static readonly Counter counter = Metric.Counter("Inserts", Unit.Items);
+        private static readonly Counter writers = Metric.Counter("Writers", Unit.Threads);
+        private static readonly Timer timer = Metric.Timer("Events", Unit.Events);
+
 
         static void Main(string[] args)
         {
@@ -20,8 +26,6 @@ namespace NEventStoreMetrics
             Console.WriteLine("Press any key to start...");
             Console.ReadLine();
             ConfigureNES();
-            Console.WriteLine("Press any key to exit...");
-            Console.ReadLine();
         }
 
         private static void ConfigureMetrics()
@@ -29,7 +33,7 @@ namespace NEventStoreMetrics
             Metric
                 .Config
                 .WithHttpEndpoint(endpoint)
-                .WithAllCounters();
+            ;
 
             Console.Clear();
             Console.WriteLine("Metrics on {0}", endpoint);
@@ -39,24 +43,32 @@ namespace NEventStoreMetrics
         {
             Wireup wireup = Wireup.Init();
             PersistenceWireup persistenceWireup = ConfigurePersistence(wireup);
-
+            counter.Increment(Iterations);
 
             using (
-                IStoreEvents storeEvents =
+                var storeEvents =
                     persistenceWireup.InitializeStorageEngine().UsingBinarySerialization().Build())
             {
                 storeEvents.Advanced.Purge();
 
-                for(int c = 1 ; c <= 1000; c++)
-                {
-                    var stream = storeEvents.OpenStream("default", c.ToString(),0,int.MaxValue);
-                    stream.Add(new EventMessage()
+                Parallel.For(1, Iterations, x =>
                     {
-                        Body = new byte[1024]
+                        writers.Increment();
+                        using (timer.NewContext())
+                        {
+                            var stream = storeEvents.OpenStream("default", x.ToString(), 0, int.MaxValue);
+                            stream.Add(new EventMessage()
+                            {
+                                Body = new byte[1024]
+                            });
+                            stream.CommitChanges(Guid.NewGuid());
+                        }
+                        counter.Decrement();
+                        writers.Decrement();
                     });
-                    stream.CommitChanges(Guid.NewGuid());
-                    counter.Increment();
-                }
+
+                Console.WriteLine("Press any key to exit...");
+                Console.ReadLine();
             }
         }
 
