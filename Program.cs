@@ -18,6 +18,7 @@ namespace NEventStoreMetrics
         private const int Iterations = 100000;
         private static string endpoint = "http://localhost:1234/";
         private static readonly Counter counter = Metric.Counter("Inserts", Unit.Items);
+        private static readonly Counter concurrency = Metric.Counter("Concurrency Ex", Unit.Errors);
         private static readonly Timer timer = Metric.Timer("Events", Unit.Events);
 
 
@@ -44,7 +45,7 @@ namespace NEventStoreMetrics
         private static void ConfigureNES()
         {
             Wireup wireup = Wireup.Init();
-   //         PersistenceWireup persistenceWireup = ConfigureSql(wireup);
+            //PersistenceWireup persistenceWireup = ConfigureSql(wireup);
             PersistenceWireup persistenceWireup = ConfigureMongo(wireup);
             counter.Increment(Iterations);
 
@@ -56,16 +57,28 @@ namespace NEventStoreMetrics
             {
                 storeEvents.Advanced.Purge();
 
-                Parallel.For(1, Iterations, x =>
+                Parallel.For(1, Iterations, new ParallelOptions{MaxDegreeOfParallelism = 4}, x =>
                     {
                         using (timer.NewContext())
                         {
-                            var stream = storeEvents.OpenStream("default", x.ToString(), 0, int.MaxValue);
-                            stream.Add(new EventMessage()
+                            do
                             {
-                                Body = "abc"
-                            });
-                            stream.CommitChanges(Guid.NewGuid());
+                                try
+                                {
+                                    var streamId = x%10;
+                                    var stream = storeEvents.OpenStream("default", streamId.ToString(), 0, int.MaxValue);
+                                    stream.Add(new EventMessage()
+                                    {
+                                        Body = "abc"
+                                    });
+                                    stream.CommitChanges(Guid.NewGuid());
+                                    break;
+                                }
+                                catch (ConcurrencyException ex)
+                                {
+                                    concurrency.Increment();
+                                }
+                            } while (true);
                         }
                         counter.Decrement();
                     });
@@ -85,7 +98,7 @@ namespace NEventStoreMetrics
         private static PersistenceWireup ConfigureMongo(Wireup wireup)
         {
             return wireup
-                .UsingMongoPersistence("Mongo", new DocumentObjectSerializer(), 
+                .UsingMongoPersistence("Mongo", new DocumentObjectSerializer(),
                 new MongoPersistenceOptions()
                 {
                     ServerSideOptimisticLoop = true
