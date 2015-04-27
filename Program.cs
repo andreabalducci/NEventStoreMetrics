@@ -18,7 +18,6 @@ namespace NEventStoreMetrics
         private const int Iterations = 100000;
         private static string endpoint = "http://localhost:1234/";
         private static readonly Counter counter = Metric.Counter("Inserts", Unit.Items);
-        private static readonly Counter writers = Metric.Counter("Writers", Unit.Threads);
         private static readonly Timer timer = Metric.Timer("Events", Unit.Events);
 
 
@@ -35,6 +34,7 @@ namespace NEventStoreMetrics
             Metric
                 .Config
                 .WithHttpEndpoint(endpoint)
+                .WithSystemCounters()
             ;
 
             Console.Clear();
@@ -58,7 +58,6 @@ namespace NEventStoreMetrics
 
                 Parallel.For(1, Iterations, x =>
                     {
-                        writers.Increment();
                         using (timer.NewContext())
                         {
                             var stream = storeEvents.OpenStream("default", x.ToString(), 0, int.MaxValue);
@@ -69,7 +68,6 @@ namespace NEventStoreMetrics
                             stream.CommitChanges(Guid.NewGuid());
                         }
                         counter.Decrement();
-                        writers.Decrement();
                     });
 
                 Console.WriteLine("Press any key to exit...");
@@ -87,7 +85,8 @@ namespace NEventStoreMetrics
         private static PersistenceWireup ConfigureMongo(Wireup wireup)
         {
             return wireup
-                .UsingMongoPersistence("Mongo", new DocumentObjectSerializer(), new MongoPersistenceOptions()
+                .UsingMongoPersistence("Mongo", new DocumentObjectSerializer(), 
+                new MongoPersistenceOptions()
                 {
                     ServerSideOptimisticLoop = true
                 });
